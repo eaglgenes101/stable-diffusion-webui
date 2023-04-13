@@ -151,14 +151,15 @@ class ExtraNetworksPage:
 
         height = f"height: {shared.opts.extra_networks_card_height}px;" if shared.opts.extra_networks_card_height else ''
         width = f"width: {shared.opts.extra_networks_card_width}px;" if shared.opts.extra_networks_card_width else ''
-        background_image = f"background-image: url(\"{html.escape(preview)}\");" if preview else ''
+        background_image = f'<img src="{html.escape(preview)}" class="preview" loading="lazy">' if preview else ''
         metadata_button = ""
         metadata = item.get("metadata")
         if metadata:
             metadata_button = f"<div class='metadata-button' title='Show metadata' onclick='extraNetworksRequestMetadata(event, {json.dumps(self.name)}, {json.dumps(item['name'])})'></div>"
 
         args = {
-            "style": f"'{height}{width}{background_image}'",
+            "background_image": background_image,
+            "style": f"'{height}{width}'",
             "prompt": item.get("prompt", None),
             "tabname": json.dumps(tabname),
             "local_preview": json.dumps(item["local_preview"]),
