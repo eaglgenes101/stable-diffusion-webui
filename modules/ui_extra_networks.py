@@ -9,6 +9,7 @@ from modules.images import read_info_from_image
 import gradio as gr
 import json
 import html
+import tqdm
 
 from modules.generation_parameters_copypaste import image_from_url_text
 
@@ -83,7 +84,7 @@ class ExtraNetworksPage:
 
     def create_html(self, tabname):
         view = shared.opts.extra_networks_default_view
-        items_html = ''
+        items_html = []
 
         self.metadata = {}
 
@@ -112,16 +113,25 @@ class ExtraNetworksPage:
 </button>
 """ for subdir in subdirs])
 
-        for item in self.list_items():
+        total_items = self.item_count()
+        if total_items >= 1000:
+            print(f"Loading extra networks page: {self.title}")
+            iterator = tqdm.tqdm(self.list_items(), total=total_items)
+        else:
+            iterator = self.list_items()
+
+        for item in iterator:
             metadata = item.get("metadata")
             if metadata:
                 self.metadata[item["name"]] = metadata
 
-            items_html += self.create_html_for_item(item, tabname)
+            items_html.append(self.create_html_for_item(item, tabname))
 
-        if items_html == '':
+        if not items_html:
             dirs = "".join([f"<li>{x}</li>" for x in self.allowed_directories_for_previews()])
-            items_html = shared.html("extra-networks-no-cards.html").format(dirs=dirs)
+            items_html = [shared.html("extra-networks-no-cards.html").format(dirs=dirs)]
+
+        items_html = "".join(items_html)
 
         self_name_id = self.name.replace(" ", "_")
 
@@ -135,6 +145,9 @@ class ExtraNetworksPage:
 """
 
         return res
+
+    def item_count(self):
+        raise NotImplementedError()
 
     def list_items(self):
         raise NotImplementedError()
@@ -241,10 +254,14 @@ def create_ui(container, button, tabname):
     ui.tabname = tabname
 
     with gr.Tabs(elem_id=tabname+"_extra_tabs") as tabs:
+        tab_name_state = gr.Textbox(tabname, visible=False)
         for page in ui.stored_extra_pages:
             with gr.Tab(page.title):
-
-                page_elem = gr.HTML(page.create_html(ui.tabname))
+                if shared.opts.ui_extra_networks_defer_load:
+                    html = ""
+                else:
+                    html = page.create_html(ui.tabname)
+                page_elem = gr.HTML(html)
                 ui.pages.append(page_elem)
 
     filter = gr.Textbox('', show_label=False, elem_id=tabname+"_extra_search", placeholder="Search...", visible=False)
@@ -252,13 +269,6 @@ def create_ui(container, button, tabname):
 
     ui.button_save_preview = gr.Button('Save preview', elem_id=tabname+"_save_preview", visible=False)
     ui.preview_target_filename = gr.Textbox('Preview save filename', elem_id=tabname+"_preview_filename", visible=False)
-
-    def toggle_visibility(is_visible):
-        is_visible = not is_visible
-        return is_visible, gr.update(visible=is_visible), gr.update(variant=("secondary-down" if is_visible else "secondary"))
-
-    state_visible = gr.State(value=False)
-    button.click(fn=toggle_visibility, inputs=[state_visible], outputs=[state_visible, container, button])
 
     def refresh():
         res = []
@@ -270,6 +280,40 @@ def create_ui(container, button, tabname):
         return res
 
     button_refresh.click(fn=refresh, inputs=[], outputs=ui.pages)
+
+    state_visible = gr.State(value=False)
+
+    if shared.opts.ui_extra_networks_defer_load:
+        def toggle_visibility_defer_load(is_visible, *pages):
+            is_visible = not is_visible
+            if is_visible:
+                new_pages = []
+                for i, pg in enumerate(ui.stored_extra_pages):
+                    html = pages[i]
+                    if not html:
+                        html = pg.create_html(ui.tabname)
+                    new_pages.append(html)
+                pages = new_pages
+            return [is_visible, gr.update(visible=is_visible), gr.update(variant=("secondary-down" if is_visible else "secondary"))] + list(pages)
+        # TODO: Use .then() so the extra networks drawer/loading spinner appears
+        # instead of nothing happening for X seconds
+        button.click(fn=toggle_visibility_defer_load, inputs=[state_visible] + ui.pages, outputs=[state_visible, container, button] + ui.pages)
+
+        # Gradio has to send the rendered HTML for the extra networks UI to the
+        # frontend every time the toggle_visibility event handler is called, even if
+        # all it does is change a single flag on and off. This causes a serious
+        # performance drop if the pages are huge strings.
+        # This callback removes Gradio's "click" event listener on the button in the
+        # frontend once it receives the pages HTML, by replacing the button and
+        # adding a new click listener to it that toggles the ".hidden" CSS class
+        # instead, thus bypassing Gradio entirely.
+        button.click(fn=None, _js="extraNetworksHookPageToggleIfBuilt", inputs=[tab_name_state], outputs=[])
+    else:
+        def toggle_visibility(is_visible):
+            is_visible = not is_visible
+            return is_visible, gr.update(visible=is_visible), gr.update(variant=("secondary-down" if is_visible else "secondary"))
+
+        button.click(fn=toggle_visibility, inputs=[state_visible], outputs=[state_visible, container, button])
 
     return ui
 
